@@ -1,0 +1,283 @@
+% No123 ecg
+
+clear all; clc; close all;
+
+% Load your ECG signal (ECG-->EKG1: that's the name that is given from the file **see README**) as our baseline - the signal 
+% that's supposed to be healthy/normal. 
+% We do this step in order to compare the given -normal- ecg with the patient's signal, 
+% which is loaded in line 27, in order to find if it's healthy or not.
+load ECG;
+x = EKG1;
+fs = 250; %given
+
+xy = fft(x);
+xK = length(xy);
+
+% baseline wander
+cutoffHz = 0.5;
+cutoffIndex = int16(xK*cutoffHz/fs);
+xy(1:cutoffIndex) = 0;
+xy(xK-cutoffIndex:xK) = 0;
+
+% inverse fourier
+ixy = ifft(xy);
+normal_output = real(ixy);
+
+% Load and process your patient's ECG signal.
+load 'sel123m.mat';    % this file is saved as "val" matrix
+% the ecg signal
+ecg = (val - 0 )/200;    % ECGsignal = (val - base)/gain;
+fs = 250; %given
+
+t = (0:length(ecg)-1)/fs;
+
+% fix it
+y = fft(ecg);
+K = length(y);
+k = 1:K;
+frequency = k*fs/K;
+magnitude = abs(y);
+
+% MANUAL baseline wander 
+cutoffHz = 0.5;
+cutoffIndex = int16(K*cutoffHz/fs);
+y(1:cutoffIndex) = 0;
+y(K-cutoffIndex:K) = 0;
+
+% inverse fourier
+iy = ifft(y);
+output = real(iy);
+
+% plot them
+figure;
+subplot(2,1,1);
+plot(t,output);
+title('original ecg of patient');
+subplot(2,1,2);
+plot(normal_output);
+axis([0 3000 -500 500]);
+title('normal ecg');
+
+
+% STEP 1: Calculate your patients Heart Rate
+maxHRHz = 180/60;
+index = int16(maxHRHz * K/fs);
+[maxValue, maxIndex] = max(magnitude(1:index));
+heartRate = 60*maxIndex*fs/K;
+
+% Normal Heart rate = [60,100];
+a = '';
+if ((heartRate>=60)&&(heartRate<=99))
+  a = disp('Normal heart rate');
+  else a = disp('Not Normal heart rate');
+endif
+
+
+
+% STEP 2 : CHECK THE P WAVE
+
+pattern = output(151:388);    % a full period of my patients ECG
+p_patient = output(151:211);    % my patient's P wave
+pattern_P = normal_output(201:231);   % Normal P wave
+ 
+figure;
+subplot(3,1,1);
+plot(pattern); % plot the ONE full-period ECG signal you selected above (line 79)
+title('patients P-T wave');   % this is ONE full-period ECG signal.
+subplot(3,1,2);
+plot(p_patient); % plot the P-wave of your patient's ECG signal you selected above (line 80)
+title('patient P wave');
+subplot(3,1,3);
+plot(pattern_P); % plot the P-wave of the healtyh ECG signal you selected above (line 81)
+title('Normal P wave'); %201-241 % I plotted this just to see it in comparison to our patient's P-wave.
+
+% STEP 2.A: I have to check whether the P-wave exists BEFORE each patient's signal/full-period ECGs.
+% Obviously HERE, we refer to patient's P-wave.
+lp = length(p_patient);
+lo = length(output);
+
+cor = []; % cor (:correlation) = itsAMatch
+for (z = 1:lo-lp)    % This for-loop checks my patient's ECG from the beginning until the end of its length.
+  cor(z) = corr(output(z:z+lp-1),p_patient);  % corr(x,y): function that compares x to y: selected pattern.
+end
+
+maxIndices = [];
+threshold = 90/100;
+index = [];
+for(i = 1:length(cor))
+    if(cor(i)>threshold)
+    index = index + 1;
+    maxIndices(index) = 1;
+end
+end
+
+% is there a P wave ?
+if ( (length(cor)<1) && (cor = null(length(cor))))
+  q = disp('P wave not found. Thats an HCM sign!!');
+  else p = disp('Found!');
+end
+
+% this plot, shows me WHERE i detected my pattern
+figure;
+hold on; 
+plot(t,output);
+plot(cor*300, 'ro');
+%axis([0 3000 -1 1]);
+%axis([0 1000 -500 500]);
+title('Correlation of the pattern across the EKG signal');
+hold off;
+
+% STEP 2.B: Height of patient's P wave: is it normal?
+% ok, found it!
+figure;
+hold on
+plot(p_patient);
+title('P wave with MAX and MIN peaks');
+%h = [-1 1];
+%d = conv(p_patient,h);
+
+%highest point => Local Maximum point (TM) of pattern's P-wave
+maxima_P = [];
+for(k = 1:length(p_patient))
+  if ( (d(k)<=0) && (d(k+1)> 0) )
+    maxima_P(k) = p_patient(k);
+   else maxima_P(k) = 0;  
+  end
+end
+
+% Note that I do not want to keep every single one TM that I find in my patient's ECG signal.
+% I will only keep the most "maximum" of them. For this purpose I will use a threshold value that will help pick these values! :)
+  %threshold_P = 0.3; % gia ta P peaks
+  %maxima_P = (maxima_P > threshold_P).*maxima_P;  % If maximum value of patient's P-wave > threshold, then I save the TM. Else, I do not save it.
+  
+maxima_P = max(p_patient);
+plot(maxima_P,'ro');                                      
+
+% lowest point => local minimum (TE) of pattern's P-wave
+% I am looking for 2 TEs: 
+te1 = min(p_patient); % after each TM                 
+te2 = min(output(171:201));  % before each TM
+plot(te1,'ro');
+plot(te2,'ro');
+
+% P wave height
+patient_P_wave_length1 = sqrt((maxima_P).^2 + (te1).^2 );
+patient_P_wave_length2 = sqrt((maxima_P).^2 + (te2).^2 );
+patient_P_wave_length = patient_P_wave_length1 + patient_P_wave_length2;
+
+b1 = '';
+if (patient_P_wave_length >= 7 )
+  b1 = disp(' --> Sign of HCM');
+ else b1 = disp('Normal P wave size');
+end
+b1
+
+% Patient's P wave length: is it normal?
+% if it's bigger that 1.5-2.5 mm ---> HCM sign
+b2 = '';
+if (length(p_patient)<=2.5)
+  b2 = disp('sign of HCM');
+ else b2 = disp('Normal P wave length'); 
+end
+b2
+
+
+% STEP 3: QRS DURATION
+
+lo = length(output);
+value = 0;
+% the QRS pattern in your paient's ecg
+qrs_pattern = output(61:191);
+figure;
+plot(qrs_pattern);
+title('my patient's QRS complex');
+
+% The main purpose here is to find each QRS complex through the whole length of our patient's ECG signal.
+% So, I use a for-loop in order to calculate the distance between all these QRS complexes, I then add them all up and find their Mean Value (MO).
+% How did I find their MO? I divided the sum of the QRS complexes with the total number of QRS complexes and I multiplied this product with 0.04 => QRS duration
+% 
+% Here, to save time, I test one QRS complex.
+% * if the for-loop is activated, write: plot(qrs_pattern(i)) on the line 175
+%for (i = 1:lo-1)
+
+  figure;
+  hold on;
+  plot(qrs_pattern);    % 95:205
+  title('QRS complex + minimum parts');  
+ te1 = min(output(101:121)); % tou S wave
+  te2 = min(output(61:101));
+  plot(te1,'go');
+  plot(te2,'ro');
+
+  % QRS duration
+  distances = sqrt((te1).^2 + (te2).^2);
+ 
+  % I have to multiply distances (QRS duration) by Ts (period) in order to turn distances into time.
+  Ts = 1/fs;
+  times = distances * Ts;   % times = the periods
+  bpms = 60* 1./times;    % 1./times = the respective frequencies
+  % The results we got (bpms) show the heart rate for each period.
+  
+  % qrs duration: 70-100 msec
+  sum = 0;
+  for (j = 1:length(bpms))
+    sum = sum + bpms(j);
+  end
+value = value + sum; 
+
+%end for  - if your for-loop is activated.
+
+% Normal QRS duration = 7-10 msec
+  sum = 0;
+  for (j = 1:length(bpms))
+    sum = sum + bpms(j);
+  end
+value = value + sum; 
+
+% QRS size
+qrs_duration = (value/length(bpms)).*0.04;
+
+c = '';
+if (qrs_duration > 120)
+  
+  c = disp('--> Sign of HCM !');
+  else c = disp('Normal QRS duration')
+endif
+
+
+% STEP 4 : S wave
+
+% my patient's S wave 
+s_pattern = output(180:221);
+
+%plot S wave
+figure;
+hold on
+plot(s_pattern);
+title('my patients S wave with MAX and MIN peaks');
+
+% you must calculate the distance between its highest and lowest point
+maxima = max(s_pattern);
+minimum = min(s_pattern);
+plot(maxima,'ro')
+plot(minimum,'ro'); 
+hold off;                                     
+
+% S wave size
+S_wave_length = sqrt((maxima).^2 + (minimum).^2 );
+
+d = '';
+if (S_wave_length >= 7 )
+  d = disp(' --> Sign of HCM');
+ else d = disp('Normal S wave');
+end
+
+
+ % FINALLY: Is my patient healthy?
+disp('Heart rate = ')
+heartRate
+a
+b1
+b2
+c
+d
